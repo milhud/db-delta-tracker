@@ -17,30 +17,30 @@ var (
 	restoreDB     = fmt.Sprintf("%s_restored", dbName)
 )
 
-// Initialize the DB connection to the default "postgres" database
+// initialize the DB connection to the default "postgres" database
 func initDB() error {
 	var err error
-	connStr := "user= password= dbname= sslmode=disable"
+	connStr := "user= password= dbname= sslmode=disable" // MUST FILL IN USERNAME AND PASSWORD
 	dbConn, err = sql.Open("postgres", connStr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to the database: %v", err)
 	}
 
-	// Create the deltas table in the original database
+	// create the deltas table in the original database
 	if err := createDeltasTable(); err != nil {
 		return fmt.Errorf("failed to create deltas table: %v", err)
 	}
 
-	// Add triggers to all tables in the original database
+	// add triggers to all tables in the original database
 	if err := addTriggersToTables(); err != nil {
 		return fmt.Errorf("failed to add triggers to tables: %v", err)
 	}
 
-	log.Println("Deltas table and triggers created successfully in testdatabase.")
+	log.Println("-The deltas table and triggers have been succesfully created for the database-")
 	return nil
 }
 
-// Create the deltas table if it doesn't exist in the original database
+// create the deltas table (if it doesn't exist)
 func createDeltasTable() error {
 	createTableQuery := `
 	CREATE TABLE IF NOT EXISTS deltas (
@@ -60,29 +60,30 @@ func createDeltasTable() error {
 	return nil
 }
 
-// Add triggers to track changes in all tables in the original database
+// add triggers to track changes in all tables in the original database
 func addTriggersToTables() error {
-	// Query to get all tables in the testdatabase
+	
+	// query to get all tables in the testdatabase
 	tablesQuery := "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"
 	rows, err := dbConn.Query(tablesQuery)
 	if err != nil {
-		return fmt.Errorf("failed to fetch tables from testdatabase: %v", err)
+		return fmt.Errorf("failed to fetch tables from database: %v", err)
 	}
 	defer rows.Close()
 
-	// Add triggers for each table in testdatabase
+	// add triggers for each table in testdatabase
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
 			return fmt.Errorf("failed to scan table name: %v", err)
 		}
 
-		// Skip the 'deltas' table (don't want to add triggers to it)
+		// skip the 'deltas' table (tracking triggers just in other databases)
 		if tableName == "deltas" {
 			continue
 		}
 
-		// Create trigger function for INSERT, UPDATE, DELETE actions
+		// create trigger function for INSERT, UPDATE, DELETE actions
 		triggerFuncQuery := fmt.Sprintf(`
 		CREATE OR REPLACE FUNCTION log_%s_changes() RETURNS TRIGGER AS $$
 		BEGIN
@@ -117,7 +118,7 @@ func addTriggersToTables() error {
 			return fmt.Errorf("failed to create trigger function for table %s: %v", tableName, err)
 		}
 
-		// Create the trigger that calls the above function
+		// create the trigger that calls the above function
 		triggerQuery := fmt.Sprintf(`
 		CREATE TRIGGER %s_trigger
 		AFTER INSERT OR UPDATE OR DELETE ON %s
@@ -135,7 +136,7 @@ func addTriggersToTables() error {
 	return nil
 }
 
-// Reconnect to a specified database
+// reconnect to a specified database
 func reconnectToDatabase(dbName string) (*sql.DB, error) {
 	connStr := fmt.Sprintf("user=postgres password=password dbname=%s sslmode=disable", dbName)
 	db, err := sql.Open("postgres", connStr)
@@ -145,7 +146,7 @@ func reconnectToDatabase(dbName string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Check if the restored database exists, and create it if it doesn't
+// check if the restored database exists, and create it if it doesn't
 func createRestoredDatabase() error {
 	var exists bool
 	err := dbConn.QueryRow("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", restoreDB).Scan(&exists)
@@ -167,16 +168,17 @@ func createRestoredDatabase() error {
 	return nil
 }
 
-// Backup a table as a JSON file
+// backup a table as a JSON file
 func backupTable(tableName string) error {
-	// Connect to the original database
+	
+	// connect to the original database
 	originalDB, err := reconnectToDatabase(dbName)
 	if err != nil {
 		return fmt.Errorf("failed to reconnect to original database: %v", err)
 	}
 	defer originalDB.Close()
 
-	// Query to fetch all rows from the table
+	// query to fetch all rows from the table
 	query := fmt.Sprintf("SELECT * FROM %s", tableName)
 	rows, err := originalDB.Query(query)
 	if err != nil {
@@ -184,7 +186,7 @@ func backupTable(tableName string) error {
 	}
 	defer rows.Close()
 
-	// Get columns for the table
+	// get columns for the table
 	columns, err := rows.Columns()
 	if err != nil {
 		return fmt.Errorf("failed to get columns for table %s: %v", tableName, err)
@@ -192,37 +194,38 @@ func backupTable(tableName string) error {
 
 	var allRows []map[string]interface{}
 	for rows.Next() {
-		// Create a slice to hold the column values
+		
+		// create a slice to hold the column values
 		columnsValues := make([]interface{}, len(columns))
 		for i := range columnsValues {
 			columnsValues[i] = new(interface{})
 		}
 
-		// Scan the row into the slice
+		// scan the row into the slice
 		err := rows.Scan(columnsValues...)
 		if err != nil {
 			return fmt.Errorf("failed to scan row from table %s: %v", tableName, err)
 		}
 
-		// Map the column names to the corresponding values
+		// map the column names to the corresponding values
 		rowMap := make(map[string]interface{})
 		for i, colName := range columns {
 			val := *(columnsValues[i].(*interface{}))
 			rowMap[colName] = val
 		}
 
-		// Add the row map to the allRows slice
+		// add the row map to the allRows slice
 		allRows = append(allRows, rowMap)
 	}
 
-	// Serialize the rows to JSON
+	// serialize the rows to JSON
 	fileName := fmt.Sprintf("%s.json", tableName)
 	data, err := json.Marshal(allRows)
 	if err != nil {
 		return fmt.Errorf("failed to serialize data to JSON for table %s: %v", tableName, err)
 	}
 
-	// Write the JSON data to a file
+	// write the JSON data to a file
 	err = ioutil.WriteFile(fileName, data, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write JSON data for table %s: %v", tableName, err)
@@ -232,30 +235,31 @@ func backupTable(tableName string) error {
 	return nil
 }
 
-// Restore a table from a JSON file
+// restore a table from a JSON file
 func restoreTable(tableName string) error {
-	// Connect to the restored database
+	
+	// connect to the restored database
 	restoredDB, err := reconnectToDatabase(restoreDB)
 	if err != nil {
 		return fmt.Errorf("failed to reconnect to restored database: %v", err)
 	}
 	defer restoredDB.Close()
 
-	// Read the JSON file containing the backup data
+	// read the JSON file containing the backup data
 	fileName := fmt.Sprintf("%s.json", tableName)
 	fileData, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		return fmt.Errorf("failed to read JSON file for table %s: %v", tableName, err)
 	}
 
-	// Deserialize the JSON data
+	// deserialize the JSON data
 	var rows []map[string]interface{}
 	err = json.Unmarshal(fileData, &rows)
 	if err != nil {
 		return fmt.Errorf("failed to deserialize JSON data for table %s: %v", tableName, err)
 	}
 
-	// Create the table in the restored database (assuming schema matches)
+	// create the table in the restored database (assuming schema matches)
 	createTableQuery := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id SERIAL PRIMARY KEY,
@@ -267,11 +271,11 @@ func restoreTable(tableName string) error {
 		return fmt.Errorf("failed to create restored table %s: %v", tableName, err)
 	}
 
-	// Prepare the insert query based on the columns in the table
-	// Assuming a simple table schema for now; adjust as needed
+	// prepare the insert query based on the columns in the table
+	// 		assuming a simple table schema for now; adjust as needed
 	insertQuery := fmt.Sprintf("INSERT INTO %s (id, name, age) VALUES ($1, $2, $3)", tableName)
 
-	// Insert each row into the restored table
+	// insert each row into the restored table
 	for _, row := range rows {
 		_, err := restoredDB.Exec(insertQuery, row["id"], row["name"], row["age"])
 		if err != nil {
@@ -283,23 +287,23 @@ func restoreTable(tableName string) error {
 	return nil
 }
 
-// Backup and restore all tables
+// backup and restore all tables
 func backupAndRestoreTables() error {
-	// Connect to the original database
+	// connect to the original database
 	originalDB, err := reconnectToDatabase(dbName)
 	if err != nil {
 		return fmt.Errorf("failed to reconnect to original database: %v", err)
 	}
 	defer originalDB.Close()
 
-	// Connect to the restored database
+	// connect to the restored database
 	restoredDB, err := reconnectToDatabase(restoreDB)
 	if err != nil {
 		return fmt.Errorf("failed to connect to restored database: %v", err)
 	}
 	defer restoredDB.Close()
 
-	// Fetch the list of tables to backup
+	// fetch the list of tables to backup
 	tablesQuery := "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"
 	rows, err := originalDB.Query(tablesQuery)
 	if err != nil {
@@ -307,7 +311,7 @@ func backupAndRestoreTables() error {
 	}
 	defer rows.Close()
 
-	// Backup and restore each table
+	// backup and restore each table
 	for rows.Next() {
 		var tableName string
 		err := rows.Scan(&tableName)
@@ -329,19 +333,19 @@ func backupAndRestoreTables() error {
 }
 
 func main() {
-	// Initialize database connections
+	// initialize database connections
 	err := initDB()
 	if err != nil {
 		log.Fatalf("Failed to initialize the database: %v", err)
 	}
 
-	// Create the restored database
+	// create the restored database
 	err = createRestoredDatabase()
 	if err != nil {
 		log.Fatalf("Failed to create restored database: %v", err)
 	}
 
-	// Backup and restore all tables
+	// backup and restore all tables
 	err = backupAndRestoreTables()
 	if err != nil {
 		log.Fatalf("Backup and restore failed: %v", err)
